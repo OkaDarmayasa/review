@@ -157,7 +157,7 @@ def swap_antonyms(text):
             if next_word in antonim_dict:
                 antonym = antonim_dict[next_word]
                 skip_next = True
-                new_words.append(antonym)
+                new_words.append(antonym.split(',')[0])
             else:
                 new_words.append(words[i])
         else:
