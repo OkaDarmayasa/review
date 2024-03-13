@@ -43,7 +43,10 @@ The TF-IDF code that is being used here is from scikit-learn TfidfVectorizer.
 There are 2 ways to remake the web app:
 1. Locally.
    You have to install streamlit in your device.
-   More can be seen here: docs.streamlit.io/get-started/installation/command-line#create-an-environment-using-venv
+   More can be seen here:
+   docs.streamlit.io/get-started/installation/command-line#create-an-environment-using-venv
+  
 2. Online
    You have to login to streamlit.io with your Google or Github account and then setup a Github repository.
-   More can be seen here: docs.streamlit.io/streamlit-community-cloud/get-started#get-started
+   More can be seen here:
+   docs.streamlit.io/streamlit-community-cloud/get-started#get-started
