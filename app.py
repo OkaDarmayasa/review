@@ -180,17 +180,25 @@ st.write("Type in your text below and don't forget to press the enter button bef
 uploaded_file = st.file_uploader("Upload file with format .csv", type="csv")
 my_text = st.text_input("Masukkan text yang ingin dicari sentimennya", max_chars=500, key='to_classify')
 
-df = pd.DataFrame()
+
+default_data = [
+            "barangnya gk bagus, jelek dipake",
+            "Barang sesuai pesanan dan cepat sampai"
+            ]
+
+df = pd.DataFrame({'content': default_data})
 
 if my_text is not None:
-    df1 = pd.DataFrame()
-    df1['content'] = my_text
+    my_text = my_text.splitlines()
+
+    text_df = pd.DataFrame(my_text, columns=['content'])
+    
+    df = pd.concat([df, text_df], ignore_index=True)
 
 if uploaded_file is not None:
     # read csv
-    df2 = pd.read_csv(uploaded_file)
-
-df = pd.concat([df1, df2])
+    csv_data = pd.read_csv(uploaded_file)
+    df = pd.concat([df, csv_data], ignore_index=True)
 
 model_vectorizer_data = {
     'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
