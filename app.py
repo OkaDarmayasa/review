@@ -209,18 +209,21 @@ model_vectorizer_data = {
     'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
 }
 
+print(df)
 selected_model = st.selectbox("Select a model", list(model_vectorizer_data.keys()))
 
 if st.button('Classify', key='classify_button'):  
     processed_df = preprocess_pipeline(df, df.columns[0])
-
+    print(processed_df)
     # Load the selected model and vectorizer
     model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
     model_path = './Model/' + model_file
     model = joblib.load(model_path)
+    print(model)
 
     vectorizer_path = './Model/' + vectorizer_file
     vectorizer = joblib.load(vectorizer_path)
+    print(vectorizer)
 
     X_new_vec = vectorizer.transform(processed_df[text_column])
     y_pred = model.predict(X_new_vec)
