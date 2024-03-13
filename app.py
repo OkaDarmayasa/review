@@ -101,7 +101,7 @@ def combine_di_with_next(text):
     return ' '.join(combined_text)
 
 def correct_typo(text):
-    corrections = pd.read_csv('./static/csv/typo_words.csv')
+    corrections = pd.read_csv('./Dataset/typo_words.csv')
 
     corrections_dict = dict(zip(corrections['wrong'], corrections['right']))
 
@@ -135,7 +135,7 @@ def next_word_negation(text):
     return ' '.join(new_words)
 
 def swap_antonyms(text):
-    antonym_file_path = './static/csv/antonim_bahasa_indonesia.csv'
+    antonym_file_path = './Dataset/antonim_bahasa_indonesia.csv'
     antonim = pd.read_csv(antonym_file_path)
     antonim.head(10)
 
