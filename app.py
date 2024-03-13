@@ -17,16 +17,18 @@ from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix
 
+st.set_page_config(layout="wide")
+
 antonym_file_path = './Dataset/antonim_bahasa_indonesia.csv'
 antonim = pd.read_csv(antonym_file_path)
 
-def preprocess_pipeline(df, text_column):
+def preprocess_pipeline(df):
     
     stop_factory = StopWordRemoverFactory()
     stopwords = stop_factory.get_stop_words()
     
     # Preprocess
-    df['preprocessed'] = df[text_column].apply(preprocess)
+    df['preprocessed'] = df['content'].apply(preprocess)
     df["preprocessed"] = df["preprocessed"].str[2:]
     
     # Combine "nya" with previous word
@@ -58,6 +60,7 @@ def preprocess_pipeline(df, text_column):
     df["stopword_removed_antonym_processed"] = df["after_antonym_text"].apply(
         lambda text: " ".join([word for word in text.split() if word not in stopwords])
     )
+    return df
    
 def preprocess(text):
     text1 = text.lower()   # case folding
@@ -162,10 +165,13 @@ def swap_antonyms(text):
 
     return ' '.join(new_words)
 
-
-st.sidebar.subheader('About the App')
-st.sidebar.write('Text Classification App with Streamlit using a trained Naive Bayes model')
-st.sidebar.write("This is just a small text classification app.")
+def map_sentiment(sentiment):
+    if sentiment == 0:
+        return 'negative'
+    elif sentiment == 1:
+        return 'positive'
+    else:
+        return None 
 
 model_path = './Model/nb_nwn_classifier.pkl' 
 model = joblib.load(model_path)
@@ -173,13 +179,15 @@ model = joblib.load(model_path)
 vectorizer_path = './Model/nb_nwn_vectorizer.pkl'
 vectorizer = joblib.load(vectorizer_path)
 
-#start the user interface
-st.title("Text Classification App")
-st.write("Type in your text below and don't forget to press the enter button before clicking/pressing the 'Classify' button")
-
-uploaded_file = st.file_uploader("Upload file with format .csv", type="csv")
-my_text = st.text_input("Masukkan text yang ingin dicari sentimennya", max_chars=500, key='to_classify')
-
+st.title("Negation Handling Text Classification App")
+st.write("Ketik review apa yang mau dicari sentimennya lalu tekan 'Classify' dan pilih model-model machine learning yang ada")
+st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
+st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
+st.write("Yang pertama hanya dengan preprocessing saja.")
+st.write("Yang kedua dengan menggabungkan kata penanda negasi dengan kata selanjutnya menggunakan underscore (contoh: tidak_suka).")
+st.write("Yang ketiga dengan mengganti kata setelah kata penanda negasi dengan antonimnya (bila ada), contoh: tidak cepat => lambat.")
+uploaded_file = st.file_uploader("Upload file csv dengan hanya 1 kolom dan data pada baris pertama diisi 'content' huruf kecil", type="csv")
+my_text = st.text_area("Masukkan text yang ingin dicari sentimennya", max_chars=2000, key='to_classify')
 
 default_data = [
             "barangnya gk bagus, jelek dipake",
@@ -209,33 +217,31 @@ model_vectorizer_data = {
     'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
 }
 
-print(df)
+if 'prev_selected_model' not in st.session_state:
+    st.session_state.prev_selected_model = None
+
 selected_model = st.selectbox("Select a model", list(model_vectorizer_data.keys()))
 
-if st.button('Classify', key='classify_button'):  
-    processed_df = preprocess_pipeline(df, df.columns[0])
-    print(processed_df)
-    # Load the selected model and vectorizer
+if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
+    st.session_state.prev_selected_model = selected_model
+
+    processed_df = preprocess_pipeline(df)
     model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
     model_path = './Model/' + model_file
     model = joblib.load(model_path)
-    print(model)
 
     vectorizer_path = './Model/' + vectorizer_file
     vectorizer = joblib.load(vectorizer_path)
-    print(vectorizer)
 
     X_new_vec = vectorizer.transform(processed_df[text_column])
     y_pred = model.predict(X_new_vec)
-
-    # Create a DataFrame to display the results
+    binary_y_pred = np.vectorize(map_sentiment)(y_pred)
     result_df = pd.DataFrame({
+        'Predicted Sentiment': binary_y_pred,
         'Text': processed_df['content'],
-        'Processed Text': processed_df['stopword_removed_nwn_processed'],
-        'Predicted Sentiment': y_pred
+        'Processed Text': processed_df['stopword_removed_processed'],
+        'Processed NWN Text': processed_df['stopword_removed_nwn_processed'],
+        'Processed Antonym Text': processed_df['stopword_removed_antonym_processed']
     })
 
-    # Display the result DataFrame
     st.dataframe(result_df)
-       
-    
