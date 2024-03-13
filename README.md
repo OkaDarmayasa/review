@@ -30,16 +30,16 @@ After inputting the text by file or text box, the next step is to click 'Classif
 The result that is displayed is a table that contains the predicted sentiment (positive or negative), the raw text, and a bunch of preprocessed text of different preprocessing steps.
 
 # How to Remake
-##Remaking the Model
+## Remaking the Model
 The main code is in the Alur Utama.ipynb file. In there, most file/data are inputted through Google Drive, so make sure to upload all of the folders in this repo into your Google Drive folder and copy the path of each file accordingly. 
 
-###The Naive Bayes Classifier
+### The Naive Bayes Classifier
 The Naive Bayes Classifier code that is being used here is from scikit-learn MultinomialNB. 
-###The Support Vector Machine Classifier
+### The Support Vector Machine Classifier
 The Support Vector Machine Classifier code that is being used here is from scikit-learn SVC.
-###The Term-Frequency Inverse-Document-Frequency (TF-IDF) Feature Extraction 
+### The Term-Frequency Inverse-Document-Frequency (TF-IDF) Feature Extraction 
 The TF-IDF code that is being used here is from scikit-learn TfidfVectorizer.
-##Remaking the Web App
+## Remaking the Web App
 There are 2 ways to remake the web app:
 1. Locally.
    You have to install streamlit in your device.
