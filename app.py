@@ -266,8 +266,11 @@ def map_sentiment(sentiment):
     else:
         return None 
 
-def download_example_file():
-    url = "https://github.com/OkaDarmayasa/review/raw/main/Dataset/test_labelled.csv"
+def download_example_file(info):
+    if info == "labelled":
+        url = "https://github.com/OkaDarmayasa/review/raw/main/Dataset/test_labelled.csv"
+    elif info == "unlabelled":
+        url = "https://github.com/OkaDarmayasa/review/raw/main/Dataset/test_no_label.csv"
     response = requests.get(url)
     file_like_object = BytesIO(response.content)
     return file_like_object
@@ -277,10 +280,11 @@ def validate_page():
     st.write("Upload file CSV yang berisi data berlabel")
     st.write("Format CSV adalah 2 kolom dengan kolom kiri berupa text dan kolom kanan berupa label (0 untuk negatif atau 1 untuk positif)")
 
-    example_file = download_example_file()
-    st.download_button(label="Download Example File", data=example_file, file_name='test_labelled.csv', mime='text/csv')
+    with st.expander("Input data", expanded=True):  
+        example_file = download_example_file("labelled")
+        st.download_button(label="Download Example File", data=example_file, file_name='test_labelled.csv', mime='text/csv')
 
-    uploaded_file = st.file_uploader("Upload file csv yang terdiri dari 2 kolom.", type="csv")
+        uploaded_file = st.file_uploader("Upload file csv yang terdiri dari 2 kolom.", type="csv")
 
     default_data = [
                 "barangnya gk bagus, jelek dipake",
@@ -353,35 +357,42 @@ def validate_page():
         show_all = st.radio("Show:", ("All Data", "Different Sentiments"))
         st.markdown(f"### Accuracy: {st.session_state.accuracy*100:.2f}%")
         if show_all == "All Data":
-            st.write(f"All Data: {len(st.session_state.result_df)} rows")
-            st.write(f"Accurately Predicted: {len(st.session_state.result_df) - len(st.session_state.filtered_df)} rows")
-            st.dataframe(st.session_state.result_df)
+            with st.expander("Show Table"):
+                st.write(f"All Data: {len(st.session_state.result_df)} rows")
+                st.write(f"Accurately Predicted: {len(st.session_state.result_df) - len(st.session_state.filtered_df)} rows")
+                st.dataframe(st.session_state.result_df)
         elif show_all == "Different Sentiments":
-            st.write(f"Rows with Different Actual and Predicted Sentiments: {len(st.session_state.filtered_df)} rows")
-            st.dataframe(st.session_state.filtered_df)
+            with st.expander("Show Table"):
+                st.write(f"Rows with Different Actual and Predicted Sentiments: {len(st.session_state.filtered_df)} rows")
+                st.dataframe(st.session_state.filtered_df)
             
 def test_page():
-    st.title("Negation Handling Text Classification App")
-    st.write("Ketik review apa yang mau dicari sentimennya lalu tekan 'Classify' dan pilih model-model machine learning yang ada")
-    st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
-    st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
-    st.write("Yang pertama hanya dengan preprocessing saja.")
-    st.write("Yang kedua dengan menggabungkan kata penanda negasi dengan kata selanjutnya menggunakan underscore (contoh: tidak_suka).")
-    st.write("Yang ketiga dengan mengganti kata setelah kata penanda negasi dengan antonimnya (bila ada), contoh: tidak cepat => lambat.")
-    uploaded_file = st.file_uploader("Upload file csv dengan hanya 1 kolom dan data pada baris pertama diisi 'content' huruf kecil", type="csv")
-    my_text = st.text_area("Masukkan text yang ingin dicari sentimennya", max_chars=2000, key='to_classify')
+    st.title("Sentiment Prediction")
+    with st.expander("Lihat detail model"):
+        st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
+        st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
+        st.write("Yang pertama hanya dengan preprocessing saja.")
+        st.write("Yang kedua dengan menggabungkan kata penanda negasi dengan kata selanjutnya menggunakan underscore (contoh: tidak_suka).")
+        st.write("Yang ketiga dengan mengganti kata setelah kata penanda negasi dengan antonimnya (bila ada), contoh: tidak cepat => lambat.")
+    
+    with st.expander("Input data", expanded=True):    
+        example_file = download_example_file("unlabelled")
+        st.download_button(label="Download Example File", data=example_file, file_name='test_unlabelled.csv', mime='text/csv')
+        
+        uploaded_file = st.file_uploader("Upload file csv yang berisi text hanya pada 1 kolom yang sama.", type="csv")
+        my_text = st.text_area("Masukkan text yang ingin dicari sentimennya", max_chars=2000, key='to_classify')
 
     default_data = [
                 "barangnya gk bagus, jelek dipake",
                 "Barang sesuai pesanan dan cepat sampai"
                 ]
 
-    df = pd.DataFrame({'content': default_data})
+    df = pd.DataFrame({'text': default_data})
 
     if my_text is not None:
         my_text = my_text.splitlines()
 
-        text_df = pd.DataFrame(my_text, columns=['content'])
+        text_df = pd.DataFrame(my_text, columns=['text'])
         
         df = pd.concat([df, text_df], ignore_index=True)
 
@@ -426,12 +437,12 @@ def test_page():
             'Processed NWN Text': processed_df['after_nwn_text'],
             'Processed Antonym Text': processed_df['after_antonym_text']
         })
-
-        st.dataframe(result_df)
+        with st.expander("Show Table"):
+            st.dataframe(result_df)
 
 
 def main():
-    st.title('Text Classification App')
+    st.title("Negation Handling Text Classification App")
 
     # Sidebar menu
     choice = st.sidebar.radio("Select:", ("Validate Model", "Test Model"))
