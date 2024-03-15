@@ -8,8 +8,11 @@ import regex as re
 import string
 import Sastrawi
 import joblib
+import requests
+import math
+from collections import Counter, defaultdict
+from io import BytesIO
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
-
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
@@ -28,7 +31,7 @@ def preprocess_pipeline(df):
     stopwords = stop_factory.get_stop_words()
     
     # Preprocess
-    df['preprocessed'] = df['content'].apply(preprocess)
+    df['preprocessed'] = df.iloc[:, 0].apply(preprocess)
     df["preprocessed"] = df["preprocessed"].str[2:]
     
     # Combine "nya" with previous word
@@ -165,6 +168,96 @@ def swap_antonyms(text):
 
     return ' '.join(new_words)
 
+def tf(text):
+    words = text.split()
+    tf_text = Counter(words)
+    for i in tf_text:
+        tf_text[i] = tf_text[i]/float(len(text))
+    return tf_text
+
+def idf(word, corpus):
+    N = len(corpus)
+
+    df = 0
+    for i in corpus:
+      if word in i:
+        df += 1
+    if df == 0:
+        return 0
+    idf = math.log10((1 + N) / (1 + df)) + 1
+    return idf
+
+def tfidf(corpus):
+    documents_list = []
+    for text in corpus:
+        tf_idf_dictionary = {}
+        computed_tf = tf(text)
+        for word in computed_tf:
+            tf_idf_dictionary[word] = computed_tf[word] * idf(word, corpus)
+        documents_list.append(tf_idf_dictionary)
+    return documents_list
+
+def vectorize_tfidf(corpus, vocabulary=None):
+    tfidf_result = tfidf(corpus)
+
+    #if no vocab is assigned, meaning it is training the tf-idf model,
+    #create new vocab
+    if vocabulary is None:
+        vocabulary = set()
+        for tfidf_doc in tfidf_result:
+            vocabulary.update(tfidf_doc.keys())
+        vocabulary = sorted(list(vocabulary))
+
+    #then create the tfidf matrix
+                            #N        x    #len(d)
+    tfidf_matrix = np.zeros((len(corpus), len(vocabulary)))
+    for i, tfidf_doc in enumerate(tfidf_result):
+        for j, term in enumerate(vocabulary):
+            tfidf_matrix[i, j] = tfidf_doc.get(term, 0.0)
+
+    return tfidf_matrix, vocabulary
+
+def vectorize_tfidf_from_processed_text(processed_text_column, vocabulary=None):
+    print("Processed text column type:", type(processed_text_column))
+    corpus = processed_text_column.tolist()
+        #this is when fitting the tfidf
+    if vocabulary is None:
+        tfidf_matrix, vocabulary = vectorize_tfidf(corpus)
+    else:
+        #this is when transforming
+        tfidf_matrix, _ = vectorize_tfidf(corpus, vocabulary=vocabulary)
+    print("TF-IDF matrix type:", type(tfidf_matrix))
+    print("Vocabulary type:", type(vocabulary))
+    return tfidf_matrix, vocabulary
+
+class MultinomialNaiveBayes:
+    def __init__(self):
+        self.class_priors = None
+        self.conditional_probs = None
+
+    def fit(self, X_train_tfidf, y_train):
+        class_counts = np.bincount(y_train)
+        self.class_priors = class_counts / len(y_train)
+
+        self.conditional_probs = {}
+        for label in np.unique(y_train):
+            X_class = X_train_tfidf[y_train == label]
+            total_word_counts = np.sum(X_class, axis=0)
+            total_word_counts += 1
+            total_words = np.sum(total_word_counts)
+            self.conditional_probs[label] = total_word_counts / total_words
+
+    def predict_proba(self, X_test_tfidf):
+        scores = np.zeros((X_test_tfidf.shape[0], len(self.class_priors)))
+        for label, conditional_probs in self.conditional_probs.items():
+            log_probs = X_test_tfidf.dot(np.log(conditional_probs).T)
+            scores[:, label] = log_probs.ravel()
+        exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
+        return exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+
+    def predict(self, X_test_tfidf):
+        return np.argmax(self.predict_proba(X_test_tfidf), axis=1)
+
 def map_sentiment(sentiment):
     if sentiment == 0:
         return 'negative'
@@ -173,75 +266,181 @@ def map_sentiment(sentiment):
     else:
         return None 
 
-model_path = './Model/nb_nwn_classifier.pkl' 
-model = joblib.load(model_path)
+def download_example_file():
+    url = "https://github.com/OkaDarmayasa/review/raw/main/Dataset/test_labelled.csv"
+    response = requests.get(url)
+    file_like_object = BytesIO(response.content)
+    return file_like_object
 
-vectorizer_path = './Model/nb_nwn_vectorizer.pkl'
-vectorizer = joblib.load(vectorizer_path)
+def validate_page():
+    st.title('Validate Model')
+    st.write("Upload file CSV yang berisi data berlabel")
+    st.write("Format CSV adalah 2 kolom dengan kolom kiri berupa text dan kolom kanan berupa label (0 untuk negatif atau 1 untuk positif)")
 
-st.title("Negation Handling Text Classification App")
-st.write("Ketik review apa yang mau dicari sentimennya lalu tekan 'Classify' dan pilih model-model machine learning yang ada")
-st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
-st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
-st.write("Yang pertama hanya dengan preprocessing saja.")
-st.write("Yang kedua dengan menggabungkan kata penanda negasi dengan kata selanjutnya menggunakan underscore (contoh: tidak_suka).")
-st.write("Yang ketiga dengan mengganti kata setelah kata penanda negasi dengan antonimnya (bila ada), contoh: tidak cepat => lambat.")
-uploaded_file = st.file_uploader("Upload file csv dengan hanya 1 kolom dan data pada baris pertama diisi 'content' huruf kecil", type="csv")
-my_text = st.text_area("Masukkan text yang ingin dicari sentimennya", max_chars=2000, key='to_classify')
+    example_file = download_example_file()
+    st.download_button(label="Download Example File", data=example_file, file_name='test_labelled.csv', mime='text/csv')
 
-default_data = [
-            "barangnya gk bagus, jelek dipake",
-            "Barang sesuai pesanan dan cepat sampai"
-            ]
+    uploaded_file = st.file_uploader("Upload file csv yang terdiri dari 2 kolom.", type="csv")
 
-df = pd.DataFrame({'content': default_data})
+    default_data = [
+                "barangnya gk bagus, jelek dipake",
+                "Barang sesuai pesanan dan cepat sampai"
+                ]
+    default_data_sentiment = [0, 1]
 
-if my_text is not None:
-    my_text = my_text.splitlines()
+    df = pd.DataFrame({'content': default_data, 'sentiment_label': default_data_sentiment})
 
-    text_df = pd.DataFrame(my_text, columns=['content'])
-    
-    df = pd.concat([df, text_df], ignore_index=True)
+    if uploaded_file is not None:
+        # read csv
+        csv_data = pd.read_csv(uploaded_file)
+        df = pd.concat([df, csv_data], ignore_index=True)
 
-if uploaded_file is not None:
-    # read csv
-    csv_data = pd.read_csv(uploaded_file)
-    df = pd.concat([df, csv_data], ignore_index=True)
+    model_vectorizer_data = {
+        'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
+        'nb_nwn': ('nb_nwn_classifier.pkl', 'nb_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'nb_antonym': ('nb_antonym_classifier.pkl', 'nb_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed'),
+        'svm_preprocessed': ('svm_preprocessed_classifier.pkl', 'svm_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
+        'svm_nwn': ('svm_nwn_classifier.pkl', 'svm_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
+    }
 
-model_vectorizer_data = {
-    'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-    'nb_nwn': ('nb_nwn_classifier.pkl', 'nb_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-    'nb_antonym': ('nb_antonym_classifier.pkl', 'nb_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed'),
-    'svm_preprocessed': ('svm_preprocessed_classifier.pkl', 'svm_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-    'svm_nwn': ('svm_nwn_classifier.pkl', 'svm_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-    'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
-}
+    if 'prev_selected_model' not in st.session_state:
+        st.session_state.prev_selected_model = None
 
-if 'prev_selected_model' not in st.session_state:
-    st.session_state.prev_selected_model = None
+    selected_model = st.selectbox("Select a model", list(model_vectorizer_data.keys()))
 
-selected_model = st.selectbox("Select a model", list(model_vectorizer_data.keys()))
+    if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
+        st.session_state.prev_selected_model = selected_model
 
-if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
-    st.session_state.prev_selected_model = selected_model
+        processed_df = preprocess_pipeline(df)
+        y_test = df.iloc[:,1]
 
-    processed_df = preprocess_pipeline(df)
-    model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
-    model_path = './Model/' + model_file
-    model = joblib.load(model_path)
+        model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
+        model_path = './Model/' + model_file
+        model = joblib.load(model_path)
 
-    vectorizer_path = './Model/' + vectorizer_file
-    vectorizer = joblib.load(vectorizer_path)
+        vectorizer_path = './Model/' + vectorizer_file
+        vocabulary = joblib.load(vectorizer_path)
 
-    X_new_vec = vectorizer.transform(processed_df[text_column])
-    y_pred = model.predict(X_new_vec)
-    binary_y_pred = np.vectorize(map_sentiment)(y_pred)
-    result_df = pd.DataFrame({
-        'Predicted Sentiment': binary_y_pred,
-        'Text': processed_df['content'],
-        'Processed Text': processed_df['stopword_removed_processed'],
-        'Processed NWN Text': processed_df['stopword_removed_nwn_processed'],
-        'Processed Antonym Text': processed_df['stopword_removed_antonym_processed']
-    })
+        X_new_vec, _ = vectorize_tfidf_from_processed_text(processed_df[text_column], vocabulary=vocabulary)
+        y_pred = model.predict(X_new_vec)
 
-    st.dataframe(result_df)
+        accuracy = accuracy_score(y_test, y_pred)
+
+        binary_y_pred = np.vectorize(map_sentiment)(y_pred)
+        binary_y_test = np.vectorize(map_sentiment)(y_test)
+
+        diff_sentiment_idx = np.where(binary_y_test != binary_y_pred)[0]
+        
+        result_df = pd.DataFrame({
+            'Actual Sentiment': binary_y_test,
+            'Predicted Sentiment': binary_y_pred,
+            'Text': processed_df['content'],
+            'Processed Text': processed_df['typo_corrected'],
+            'Processed NWN Text': processed_df['after_nwn_text'],
+            'Processed Antonym Text': processed_df['after_antonym_text']
+        })
+
+        filtered_df = result_df.iloc[diff_sentiment_idx]
+
+        st.session_state.filtered_df = filtered_df
+        st.session_state.result_df = result_df
+        st.session_state.accuracy = accuracy
+
+
+    if 'filtered_df' in st.session_state:
+        # Add menu to select between viewing all data or only different sentiment rows
+        show_all = st.radio("Show:", ("All Data", "Different Sentiments"))
+        st.markdown(f"### Accuracy: {st.session_state.accuracy*100:.2f}%")
+        if show_all == "All Data":
+            st.write(f"All Data: {len(st.session_state.result_df)} rows")
+            st.write(f"Accurately Predicted: {len(st.session_state.result_df) - len(st.session_state.filtered_df)} rows")
+            st.dataframe(st.session_state.result_df)
+        elif show_all == "Different Sentiments":
+            st.write(f"Rows with Different Actual and Predicted Sentiments: {len(st.session_state.filtered_df)} rows")
+            st.dataframe(st.session_state.filtered_df)
+            
+def test_page():
+    st.title("Negation Handling Text Classification App")
+    st.write("Ketik review apa yang mau dicari sentimennya lalu tekan 'Classify' dan pilih model-model machine learning yang ada")
+    st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
+    st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
+    st.write("Yang pertama hanya dengan preprocessing saja.")
+    st.write("Yang kedua dengan menggabungkan kata penanda negasi dengan kata selanjutnya menggunakan underscore (contoh: tidak_suka).")
+    st.write("Yang ketiga dengan mengganti kata setelah kata penanda negasi dengan antonimnya (bila ada), contoh: tidak cepat => lambat.")
+    uploaded_file = st.file_uploader("Upload file csv dengan hanya 1 kolom dan data pada baris pertama diisi 'content' huruf kecil", type="csv")
+    my_text = st.text_area("Masukkan text yang ingin dicari sentimennya", max_chars=2000, key='to_classify')
+
+    default_data = [
+                "barangnya gk bagus, jelek dipake",
+                "Barang sesuai pesanan dan cepat sampai"
+                ]
+
+    df = pd.DataFrame({'content': default_data})
+
+    if my_text is not None:
+        my_text = my_text.splitlines()
+
+        text_df = pd.DataFrame(my_text, columns=['content'])
+        
+        df = pd.concat([df, text_df], ignore_index=True)
+
+    if uploaded_file is not None:
+        # read csv
+        csv_data = pd.read_csv(uploaded_file)
+        df = pd.concat([df, csv_data], ignore_index=True)
+
+    model_vectorizer_data = {
+        'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
+        'nb_nwn': ('nb_nwn_classifier.pkl', 'nb_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'nb_antonym': ('nb_antonym_classifier.pkl', 'nb_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed'),
+        'svm_preprocessed': ('svm_preprocessed_classifier.pkl', 'svm_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
+        'svm_nwn': ('svm_nwn_classifier.pkl', 'svm_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
+    }
+
+    if 'prev_selected_model' not in st.session_state:
+        st.session_state.prev_selected_model = None
+
+    selected_model = st.selectbox("Select a model", list(model_vectorizer_data.keys()))
+
+    if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
+        st.session_state.prev_selected_model = selected_model
+
+        processed_df = preprocess_pipeline(df)
+        model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
+        model_path = './Model/' + model_file
+        model = joblib.load(model_path)
+
+        vectorizer_path = './Model/' + vectorizer_file
+        vocabulary = joblib.load(vectorizer_path)
+
+        X_new_vec, _ = vectorize_tfidf_from_processed_text(processed_df[text_column], vocabulary=vocabulary)
+        y_pred = model.predict(X_new_vec)
+
+        binary_y_pred = np.vectorize(map_sentiment)(y_pred)
+        result_df = pd.DataFrame({
+            'Predicted Sentiment': binary_y_pred,
+            'Text': processed_df['content'],
+            'Processed Text': processed_df['typo_corrected'],
+            'Processed NWN Text': processed_df['after_nwn_text'],
+            'Processed Antonym Text': processed_df['after_antonym_text']
+        })
+
+        st.dataframe(result_df)
+
+
+def main():
+    st.title('Text Classification App')
+
+    # Sidebar menu
+    choice = st.sidebar.radio("Select:", ("Validate Model", "Test Model"))
+
+    # Display page based on user choice
+    if choice == "Validate Model":
+        validate_page()
+    elif choice == "Test Model":
+        test_page()
+
+if __name__ == "__main__":
+    main()
