@@ -218,7 +218,6 @@ def vectorize_tfidf(corpus, vocabulary=None):
     return tfidf_matrix, vocabulary
 
 def vectorize_tfidf_from_processed_text(processed_text_column, vocabulary=None):
-    print("Processed text column type:", type(processed_text_column))
     corpus = processed_text_column.tolist()
         #this is when fitting the tfidf
     if vocabulary is None:
@@ -226,8 +225,6 @@ def vectorize_tfidf_from_processed_text(processed_text_column, vocabulary=None):
     else:
         #this is when transforming
         tfidf_matrix, _ = vectorize_tfidf(corpus, vocabulary=vocabulary)
-    print("TF-IDF matrix type:", type(tfidf_matrix))
-    print("Vocabulary type:", type(vocabulary))
     return tfidf_matrix, vocabulary
 
 class MultinomialNaiveBayes:
@@ -357,12 +354,12 @@ def validate_page():
         show_all = st.radio("Show:", ("All Data", "Different Sentiments"))
         st.markdown(f"### Accuracy: {st.session_state.accuracy*100:.2f}%")
         if show_all == "All Data":
-            with st.expander("Show Table"):
+            with st.expander("Show Table", expanded=True):
                 st.write(f"All Data: {len(st.session_state.result_df)} rows")
                 st.write(f"Accurately Predicted: {len(st.session_state.result_df) - len(st.session_state.filtered_df)} rows")
                 st.dataframe(st.session_state.result_df)
         elif show_all == "Different Sentiments":
-            with st.expander("Show Table"):
+            with st.expander("Show Table", expanded=True):
                 st.write(f"Rows with Different Actual and Predicted Sentiments: {len(st.session_state.filtered_df)} rows")
                 st.dataframe(st.session_state.filtered_df)
             
@@ -387,15 +384,15 @@ def test_page():
                 "Barang sesuai pesanan dan cepat sampai"
                 ]
 
-    df = pd.DataFrame({'text': default_data})
+    df = pd.DataFrame({'content': default_data})
 
     if my_text is not None:
         my_text = my_text.splitlines()
 
-        text_df = pd.DataFrame(my_text, columns=['text'])
+        text_df = pd.DataFrame(my_text, columns=['content'])
         
         df = pd.concat([df, text_df], ignore_index=True)
-
+    
     if uploaded_file is not None:
         # read csv
         csv_data = pd.read_csv(uploaded_file)
@@ -417,7 +414,6 @@ def test_page():
 
     if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
         st.session_state.prev_selected_model = selected_model
-
         processed_df = preprocess_pipeline(df)
         model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
         model_path = './Model/' + model_file
@@ -432,12 +428,12 @@ def test_page():
         binary_y_pred = np.vectorize(map_sentiment)(y_pred)
         result_df = pd.DataFrame({
             'Predicted Sentiment': binary_y_pred,
-            'Text': processed_df['content'],
+            'Content': processed_df['content'],
             'Processed Text': processed_df['typo_corrected'],
             'Processed NWN Text': processed_df['after_nwn_text'],
             'Processed Antonym Text': processed_df['after_antonym_text']
         })
-        with st.expander("Show Table"):
+        with st.expander("Show Table", expanded=True):
             st.dataframe(result_df)
 
 
