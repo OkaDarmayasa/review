@@ -10,6 +10,7 @@ import Sastrawi
 import joblib
 import requests
 import math
+import scipy.sparse as sp
 from collections import Counter, defaultdict
 from io import BytesIO
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
@@ -25,61 +26,117 @@ st.set_page_config(layout="wide")
 antonym_file_path = './Dataset/antonim_bahasa_indonesia.csv'
 antonim = pd.read_csv(antonym_file_path)
 
-def preprocess_pipeline(df):
+kamus_huruf_berulang = pd.read_csv("./Dataset/kbbi.csv")
+correct_words = set(kamus_huruf_berulang['a'])
+
+kata_dasar = pd.read_csv("./Dataset/kata_dasar.csv")
+valid_root_words = set(kata_dasar['kata'])
+
+def preprocess_pipeline(df, text_column):
     
     stop_factory = StopWordRemoverFactory()
     stopwords = stop_factory.get_stop_words()
-    
+
     # Preprocess
-    df['preprocessed'] = df.iloc[:, 0].apply(preprocess)
-    df["preprocessed"] = df["preprocessed"].str[2:]
-    
-    # Combine "nya" with previous word
-    df['combined_nya'] = df['preprocessed'].apply(combine_nya_with_previous) 
-    
-    # Combine "di" with previous word
-    df['combined_di'] = df['combined_nya'].apply(combine_di_with_next) 
+    df['preprocessed'] = df[text_column].apply(preprocess_text)
 
     # Apply typo correction
-    df['typo_corrected'] = df['combined_di'].apply(correct_typo)
+    df['typo_corected'] = df['preprocessed'].apply(correct_typo)
+
+    # Apply cleaning multiple letter typo
+    df['typo_corrected'] = df['typo_corected'].apply(lambda x: correct_words_in_sentence(x, correct_words))
+
+    # Combine "nya" with previous word
+    df['combined_nya'] = df['typo_corrected'].apply(combine_nya_with_previous)
+
+    # Combine "di" with previous word
+    df['combined_di'] = df['combined_nya'].apply(combine_di_with_next)
+
+    # Apply typo correction
+    df['stemmed'] = df['combined_di'].apply(process_sentence)
 
     # Apply next word negation
-    df['after_nwn_text'] = df['typo_corrected'].apply(next_word_negation)
-    
+    df['after_nwn_text'] = df['stemmed'].apply(next_word_negation)
+
     # Apply antonym swapping
-    df['after_antonym_text'] = df['typo_corrected'].apply(swap_antonyms)
-    
+    df['after_antonym_text'] = df['stemmed'].apply(swap_antonyms)
+
     # Remove stopwords on preprocessed only
-    df["stopword_removed_processed"] = df["typo_corrected"].apply(
+    df["stopword_removed_processed"] = df["stemmed"].apply(
         lambda text: " ".join([word for word in text.split() if word not in stopwords])
     )
-    
+
     # Remove stopwords on next word negation
     df["stopword_removed_nwn_processed"] = df["after_nwn_text"].apply(
         lambda text: " ".join([word for word in text.split() if word not in stopwords])
     )
-    
+
     # Remove stopwords on antonym swapping
     df["stopword_removed_antonym_processed"] = df["after_antonym_text"].apply(
         lambda text: " ".join([word for word in text.split() if word not in stopwords])
     )
+
     return df
    
-def preprocess(text):
-    text1 = text.lower()   # case folding
-    text4 = remove_emojis(text1)
-    text5 = re.sub(r"\d+", "", text4)   # remove numbers
-    text6 = text5.replace('\\n',' ')    # hapus karakter '\n'
-    text7 = remove_punctuation(text6)
-    result = text7.strip()   # remove whitespace
-    return result
+def preprocess_text(text):
+    # Case folding
+    text = text.lower()    
+    # Add space after punctuation
+    text = re.sub(r'([,.!?])', r' \1 ', text)
+    # Remove emojis
+    text = re.sub(r'[^\w\s,]', '', text)
+    # Remove numbers
+    text = re.sub(r'\d+', '', text)
+    # Remove whitespaces
+    text = ' '.join(text.split())
+    # Remove punctuation
+    text = text.translate(str.maketrans('', '', string.punctuation))
 
-def remove_emojis(text):
-    return str(text.encode('ascii', 'ignore'))
+    return text
 
-def remove_punctuation(text):
-    regex = re.compile('[%s]' % re.escape(string.punctuation))
-    return regex.sub(' ', text)
+##1 For typo correction with Norvig's algorithm
+def words(text):
+    return re.findall(r'\w+', text.lower())
+
+def train(words):
+    return Counter(words)
+
+def edits1(word):
+    letters    = 'abcdefghijklmnopqrstuvwxyz'
+    splits     = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+    deletes    = [L + R[1:] for L, R in splits if R]
+    transposes = [L + R[1] + R[0] + R[2:] for L, R in splits if len(R) > 1]
+    replaces   = [L + c + R[1:] for L, R in splits if R for c in letters]
+    inserts    = [L + c + R for L, R in splits for c in letters]
+    return set(deletes + transposes + replaces + inserts)
+
+def known(words, valid_words):
+    return set(w for w in words if w in valid_words)
+
+def correct(word, valid_words_with_multiples):
+    candidates = (known([word], valid_words_with_multiples) or
+                  known(edits1(word), valid_words_with_multiples) or
+                  known(edits1(word), valid_words_with_multiples) or
+                  [word])
+    return max(candidates, key=lambda w: -len(w))
+
+def reduce_consecutive_duplicates(word, max_consecutive=2):
+    pattern = re.compile(r'(.)\1{'+str(max_consecutive)+',}')
+    return pattern.sub(lambda m: m.group(1) * max_consecutive, word)
+
+def correct_word(word, valid_words):
+    # Check reduced forms in decreasing order of max_consecutive
+    for max_consecutive in range(2, 0, -1):  # Start from 2, then go to 1
+        reduced_word = reduce_consecutive_duplicates(word, max_consecutive)
+        if reduced_word in valid_words:
+            return reduced_word
+
+    # If none of the above forms are valid, use the spell checker
+    return correct(reduce_consecutive_duplicates(word, 2), valid_words)
+
+def correct_words_in_sentence(sentence, valid_words):
+    corrected_words = [correct_word(word, valid_words) for word in sentence.split()]
+    return ' '.join(corrected_words)
 
 def combine_nya_with_previous(text):
     words = text.split()
@@ -121,6 +178,56 @@ def correct_typo(text):
     corrected_text = ' '.join(corrected_words)
     
     return corrected_text
+
+
+##2 For stemming
+def is_valid_root(word):
+    return word in valid_root_words
+
+def remove_prefix(word, prefix):
+    if word.startswith(prefix):
+        return word[len(prefix):]
+    return word
+
+def remove_suffix(word, suffix):
+    if word.endswith(suffix):
+        return word[:-len(suffix)]
+    return word
+
+def stem_indonesian(word):
+    original_word = word
+
+    prefixes = ["ber", "ter", "me", "di", "ke", "se", "pe", "per", "mem"]
+    suffixes = ["kan", "i", "an", "nya"]
+    for prefix in prefixes:
+        for suffix in suffixes:
+            temp_word = remove_prefix(word, prefix)
+            temp_word = remove_suffix(temp_word, suffix)
+
+            if is_valid_root(temp_word):
+                return temp_word
+
+            temp_word = remove_suffix(word, suffix)
+            temp_word = remove_prefix(temp_word, prefix)
+
+            if is_valid_root(temp_word):
+                return temp_word
+
+            temp_word = remove_prefix(word, prefix)
+            if is_valid_root(temp_word):
+                return temp_word
+
+            temp_word = remove_suffix(word, suffix)
+            if is_valid_root(temp_word):
+                return temp_word
+
+    return original_word
+
+def process_sentence(sentence):
+    words = sentence.split()
+    stemmed_words = [stem_indonesian(word) for word in words]
+    return ' '.join(stemmed_words)
+
 
 def next_word_negation(text):
     words = text.split()
@@ -171,68 +278,68 @@ def swap_antonyms(text):
 def tf(text):
     words = text.split()
     tf_text = Counter(words)
-    for i in tf_text:
-        tf_text[i] = tf_text[i]/float(len(text))
+    for word in tf_text:
+        tf_text[word] = tf_text[word] / float(len(words))
     return tf_text
 
-def idf(word, corpus):
+def idf(corpus):
     N = len(corpus)
+    idf_dict = {}
+    df_dict = Counter()
 
-    df = 0
-    for i in corpus:
-      if word in i:
-        df += 1
-    if df == 0:
-        return 0
-    idf = math.log10((1 + N) / (1 + df)) + 1
-    return idf
+    for document in corpus:
+        words = set(document.split())
+        for word in words:
+            df_dict[word] += 1
 
-def tfidf(corpus):
-    documents_list = []
+    for word, df in df_dict.items():
+        idf_dict[word] = math.log((1 + N) / (1 + df)) + 1
+
+    return idf_dict
+
+def tfidf(corpus, idf_dict):
+    tfidf_result = []
     for text in corpus:
         tf_idf_dictionary = {}
-        computed_tf = tf(text)
-        for word in computed_tf:
-            tf_idf_dictionary[word] = computed_tf[word] * idf(word, corpus)
-        documents_list.append(tf_idf_dictionary)
-    return documents_list
+        tf_text = tf(text)
+        for word in tf_text:
+            tf_idf_dictionary[word] = tf_text[word] * idf_dict.get(word, 0)
+        tfidf_result.append(tf_idf_dictionary)
+    return tfidf_result
 
 def vectorize_tfidf(corpus, vocabulary=None):
-    tfidf_result = tfidf(corpus)
-
-    #if no vocab is assigned, meaning it is training the tf-idf model,
-    #create new vocab
+    idf_dict = idf(corpus)
+    tfidf_result = tfidf(corpus, idf_dict)
+    
     if vocabulary is None:
-        vocabulary = set()
-        for tfidf_doc in tfidf_result:
-            vocabulary.update(tfidf_doc.keys())
-        vocabulary = sorted(list(vocabulary))
-
-    #then create the tfidf matrix
-                            #N        x    #len(d)
-    tfidf_matrix = np.zeros((len(corpus), len(vocabulary)))
+        vocabulary = sorted(idf_dict.keys())
+    
+    row_indices = []
+    col_indices = []
+    data = []
+    
     for i, tfidf_doc in enumerate(tfidf_result):
         for j, term in enumerate(vocabulary):
-            tfidf_matrix[i, j] = tfidf_doc.get(term, 0.0)
-
+            if term in tfidf_doc:
+                row_indices.append(i)
+                col_indices.append(j)
+                data.append(tfidf_doc[term])
+    
+    tfidf_matrix = sp.csr_matrix((data, (row_indices, col_indices)), shape=(len(corpus), len(vocabulary)))
     return tfidf_matrix, vocabulary
 
 def vectorize_tfidf_from_processed_text(processed_text_column, vocabulary=None):
     corpus = processed_text_column.tolist()
-        #this is when fitting the tfidf
-    if vocabulary is None:
-        tfidf_matrix, vocabulary = vectorize_tfidf(corpus)
-    else:
-        #this is when transforming
-        tfidf_matrix, _ = vectorize_tfidf(corpus, vocabulary=vocabulary)
-    return tfidf_matrix, vocabulary
+    return vectorize_tfidf(corpus, vocabulary)
 
 class MultinomialNaiveBayes:
     def __init__(self):
         self.class_priors = None
         self.conditional_probs = None
+        self.vocabulary = None
 
-    def fit(self, X_train_tfidf, y_train):
+    def fit(self, X_train_tfidf, y_train, vocabulary):
+        self.vocabulary = vocabulary
         class_counts = np.bincount(y_train)
         self.class_priors = class_counts / len(y_train)
 
@@ -240,7 +347,7 @@ class MultinomialNaiveBayes:
         for label in np.unique(y_train):
             X_class = X_train_tfidf[y_train == label]
             total_word_counts = np.sum(X_class, axis=0)
-            total_word_counts += 1
+            total_word_counts += 1  # Laplace smoothing
             total_words = np.sum(total_word_counts)
             self.conditional_probs[label] = total_word_counts / total_words
 
@@ -295,14 +402,14 @@ def validate_page():
         # read csv
         csv_data = pd.read_csv(uploaded_file)
         df = pd.concat([df, csv_data], ignore_index=True)
-
+ 
     model_vectorizer_data = {
-        'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-        'nb_nwn': ('nb_nwn_classifier.pkl', 'nb_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-        'nb_antonym': ('nb_antonym_classifier.pkl', 'nb_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed'),
-        'svm_preprocessed': ('svm_preprocessed_classifier.pkl', 'svm_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-        'svm_nwn': ('svm_nwn_classifier.pkl', 'svm_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-        'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
+        'nb_preprocessed': ('nb_preprocessed_best_classifier.pkl', 'nb_preprocessed_best_vectorizer.pkl', 'stopword_removed_processed'),
+        'nb_nwn': ('nb_nwn_best_classifier.pkl', 'nb_nwn_best_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'nb_antonym': ('nb_antonym_best_classifier.pkl', 'nb_antonym_best_vectorizer.pkl', 'stopword_removed_antonym_processed'),
+        'svm_preprocessed': ('svm_preprocessed_best_classifier.pkl', 'svm_preprocessed_best_vectorizer.pkl', 'stopword_removed_processed'),
+        'svm_nwn': ('svm_nwn_best_classifier.pkl', 'svm_nwn_best_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'svm_antonym': ('svm_antonym_best_classifier.pkl', 'svm_antonym_best_vectorizer.pkl', 'stopword_removed_antonym_processed')
     }
 
     if 'prev_selected_model' not in st.session_state:
@@ -313,8 +420,8 @@ def validate_page():
     if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
         st.session_state.prev_selected_model = selected_model
 
-        processed_df = preprocess_pipeline(df)
-        y_test = df.iloc[:,1]
+        processed_df = preprocess_pipeline(df, df.columns[0])
+        y_test = df.iloc[:, 1]
 
         model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
         model_path = './Model/' + model_file
@@ -399,12 +506,12 @@ def test_page():
         df = pd.concat([df, csv_data], ignore_index=True)
 
     model_vectorizer_data = {
-        'nb_preprocessed': ('nb_preprocessed_classifier.pkl', 'nb_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-        'nb_nwn': ('nb_nwn_classifier.pkl', 'nb_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-        'nb_antonym': ('nb_antonym_classifier.pkl', 'nb_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed'),
-        'svm_preprocessed': ('svm_preprocessed_classifier.pkl', 'svm_preprocessed_vectorizer.pkl', 'stopword_removed_processed'),
-        'svm_nwn': ('svm_nwn_classifier.pkl', 'svm_nwn_vectorizer.pkl', 'stopword_removed_nwn_processed'),
-        'svm_antonym': ('svm_antonym_classifier.pkl', 'svm_antonym_vectorizer.pkl', 'stopword_removed_antonym_processed')
+        'nb_preprocessed': ('nb_preprocessed_best_classifier.pkl', 'nb_preprocessed_best_vectorizer.pkl', 'stopword_removed_processed'),
+        'nb_nwn': ('nb_nwn_best_classifier.pkl', 'nb_nwn_best_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'nb_antonym': ('nb_antonym_best_classifier.pkl', 'nb_antonym_best_vectorizer.pkl', 'stopword_removed_antonym_processed'),
+        'svm_preprocessed': ('svm_preprocessed_best_classifier.pkl', 'svm_preprocessed_best_vectorizer.pkl', 'stopword_removed_processed'),
+        'svm_nwn': ('svm_nwn_best_classifier.pkl', 'svm_nwn_best_vectorizer.pkl', 'stopword_removed_nwn_processed'),
+        'svm_antonym': ('svm_antonym_best_classifier.pkl', 'svm_antonym_best_vectorizer.pkl', 'stopword_removed_antonym_processed')
     }
 
     if 'prev_selected_model' not in st.session_state:
@@ -414,7 +521,7 @@ def test_page():
 
     if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
         st.session_state.prev_selected_model = selected_model
-        processed_df = preprocess_pipeline(df)
+        processed_df = preprocess_pipeline(df, df.columns[0])
         model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
         model_path = './Model/' + model_file
         model = joblib.load(model_path)
