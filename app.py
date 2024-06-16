@@ -32,6 +32,9 @@ correct_words = set(kamus_huruf_berulang['a'])
 kata_dasar = pd.read_csv("./Dataset/kata_dasar.csv")
 valid_root_words = set(kata_dasar['kata'])
 
+corrections = pd.read_csv('./Dataset/typo_words.csv')
+corrections_dict = dict(zip(corrections['wrong'], corrections['right']))
+
 def preprocess_pipeline(df, text_column):
     
     stop_factory = StopWordRemoverFactory()
@@ -164,21 +167,10 @@ def combine_di_with_next(text):
     return ' '.join(combined_text)
 
 def correct_typo(text):
-    corrections = pd.read_csv('./Dataset/typo_words.csv')
-
-    corrections_dict = dict(zip(corrections['wrong'], corrections['right']))
-
     words = text.split()
-    corrected_words = []
-    
-    for word in words:
-        corrected_word = corrections_dict.get(word, word)
-        corrected_words.append(corrected_word)
-
+    corrected_words = [corrections_dict.get(word, word) for word in words]
     corrected_text = ' '.join(corrected_words)
-    
     return corrected_text
-
 
 ##2 For stemming
 def is_valid_root(word):
