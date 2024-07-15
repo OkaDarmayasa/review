@@ -388,13 +388,11 @@ def validate_page():
                 ]
     default_data_sentiment = [0, 1]
 
-    df = pd.DataFrame({'content': default_data, 'sentiment_label': default_data_sentiment})
-
     if uploaded_file is not None:
-        # read csv
-        csv_data = pd.read_csv(uploaded_file)
-        df = pd.concat([df, csv_data], ignore_index=True)
- 
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.DataFrame({'content': default_data, 'sentiment_label': default_data_sentiment})
+
     model_vectorizer_data = {
         'nb_preprocessed': ('nb_preprocessed_best_classifier.pkl', 'nb_preprocessed_best_vectorizer.pkl', 'stopword_removed_processed'),
         'nb_nwn': ('nb_nwn_best_classifier.pkl', 'nb_nwn_best_vectorizer.pkl', 'stopword_removed_nwn_processed'),
@@ -404,6 +402,8 @@ def validate_page():
         'svm_antonym': ('svm_antonym_best_classifier.pkl', 'svm_antonym_best_vectorizer.pkl', 'stopword_removed_antonym_processed')
     }
 
+    processed_df = preprocess_pipeline(df, df.columns[0])
+
     if 'prev_selected_model' not in st.session_state:
         st.session_state.prev_selected_model = None
 
@@ -412,7 +412,6 @@ def validate_page():
     if selected_model != st.session_state.prev_selected_model or st.button('Classify', key='classify_button'):
         st.session_state.prev_selected_model = selected_model
 
-        processed_df = preprocess_pipeline(df, df.columns[0])
         y_test = df.iloc[:, 1]
 
         model_file, vectorizer_file, text_column = model_vectorizer_data[selected_model]
@@ -435,7 +434,7 @@ def validate_page():
         result_df = pd.DataFrame({
             'Actual Sentiment': binary_y_test,
             'Predicted Sentiment': binary_y_pred,
-            'Text': processed_df['content'],
+            'Text': processed_df.columns[0],
             'Processed Text': processed_df['typo_corrected'],
             'Processed NWN Text': processed_df['after_nwn_text'],
             'Processed Antonym Text': processed_df['after_antonym_text']
@@ -464,6 +463,7 @@ def validate_page():
             
 def test_page():
     st.title("Sentiment Prediction")
+    
     with st.expander("Lihat detail model"):
         st.write("Ada 6 mesin yang di-deploy, yaitu 3 mesin naive bayes dan 3 mesin svm")
         st.write("Masing-masing mesin naive bayes dan svm terdiri dari mesin yang di-train pada dataset yang dilakukan 3 tahap preprocessing yang berbeda.")
@@ -485,15 +485,12 @@ def test_page():
 
     df = pd.DataFrame({'content': default_data})
 
-    if my_text is not None:
+    if my_text:
         my_text = my_text.splitlines()
-
         text_df = pd.DataFrame(my_text, columns=['content'])
-        
         df = pd.concat([df, text_df], ignore_index=True)
     
-    if uploaded_file is not None:
-        # read csv
+    if uploaded_file:
         csv_data = pd.read_csv(uploaded_file)
         df = pd.concat([df, csv_data], ignore_index=True)
 
